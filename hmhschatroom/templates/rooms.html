@@ -1,0 +1,15 @@
+<div id="rooms">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Description</th>
+                <th>Visit</th>
+                <!-- <th>Delete</th> -->
+            </tr>
+        </thead>
+        <tbody id="rooms-content">
+            {% for room in rooms %} {% include "room.html" %} {% endfor %}
+        </tbody>
+    </table>
+</div>
