@@ -19,6 +19,7 @@
             buildInputs = with pkgs; [
               cargo-shuttle
               sqlx-cli
+              tailwindcss
             ];
           };
         }
