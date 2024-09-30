@@ -4,13 +4,17 @@ use axum::{
     response::{sse::Event, IntoResponse, Response, Sse},
     Extension, Form,
 };
-use sqlx::types::chrono::{DateTime, Local};
+use axum_extra::extract::cookie::CookieJar;
+use sqlx::types::chrono::Local;
 use std::convert::Infallible;
 use std::time::Duration;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt as _};
 
-use crate::models::{Message, MessageNew, Room, RoomNew};
+use crate::{
+    db,
+    models::{Message, MessageNew, Room, RoomNew, RoomRaw},
+};
 use crate::{errors::ApiError, router::AppState, router::RoomsStream, templates};
 
 pub async fn home() -> impl IntoResponse {
@@ -18,10 +22,9 @@ pub async fn home() -> impl IntoResponse {
 }
 
 pub async fn fetch_rooms(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    println!("Getting rooms");
-    let rooms = sqlx::query_as::<_, Room>("SELECT * FROM rooms")
-        .fetch_all(&state.db)
-        .await?;
+    let rooms = crate::db::get_rooms_with_messages(&state.db)
+        .await
+        .map_err(ApiError::SQLError)?;
 
     Ok(templates::Records { rooms })
 }
@@ -35,13 +38,21 @@ pub async fn styles() -> Result<impl IntoResponse, ApiError> {
     Ok(response)
 }
 
+pub async fn tailwind() -> Result<impl IntoResponse, ApiError> {
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/css")
+        .body(include_str!("../templates/tailwind.css").to_owned())?;
+
+    Ok(response)
+}
+
 pub async fn create_room(
     State(state): State<AppState>,
-    Extension(tx): Extension<RoomsStream>,
     Form(form): Form<RoomNew>,
 ) -> impl IntoResponse {
     println!("Creating room");
-    let room = sqlx::query_as::<_, Room>(
+    let room = sqlx::query_as::<_, RoomRaw>(
         "INSERT INTO rooms (name, description) VALUES ($1, $2) RETURNING id, name, description",
     )
     .bind(form.name)
@@ -50,60 +61,63 @@ pub async fn create_room(
     .await
     .unwrap();
 
-    if tx.send(()).is_err() {
-        eprintln!(
-            "Record with ID {} was created but nobody's listening to the stream!",
-            room.id
-        );
-    }
-
+    let room = Room {
+        id: room.id,
+        name: room.name,
+        description: room.description,
+        messages: Vec::new(),
+    };
     templates::RoomNewTemplate { room }
 }
 
 pub async fn delete_room(
     State(state): State<AppState>,
     Path(id): Path<i32>,
-    Extension(tx): Extension<RoomsStream>,
 ) -> Result<impl IntoResponse, ApiError> {
     sqlx::query("DELETE FROM rooms WHERE ID = $1")
         .bind(id)
         .execute(&state.db)
         .await?;
 
-    if tx.send(()).is_err() {
-        eprintln!(
-            "Record with ID {} was deleted but nobody's listening to the stream!",
-            id
-        );
-    }
-
     Ok(StatusCode::OK)
 }
 
 pub async fn handle_stream(
     Extension(tx): Extension<RoomsStream>,
+    Path(room): Path<i32>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = tx.subscribe();
     let stream = BroadcastStream::new(rx);
 
-    Sse::new(stream.map(|_msg| Event::default().event("reload")).map(Ok)).keep_alive(
+    Sse::new(
+        stream
+            .filter(move |msg| msg.as_ref().is_ok_and(move |msg| *msg == room))
+            .map(|_msg| Ok(Event::default().event("reload").data("\n"))),
+    )
+    .keep_alive(
         axum::response::sse::KeepAlive::new()
-            .interval(Duration::from_secs(600))
+            .interval(Duration::from_secs(10))
             .text("keep-alive-text"),
     )
 }
 
 // TODO: Add real error handling
-pub async fn room(State(state): State<AppState>, Path(id): Path<i32>) -> impl IntoResponse {
-    let room = sqlx::query_as::<_, Room>("SELECT * FROM rooms WHERE id=$1")
-        .bind(id)
-        .fetch_one(&state.db)
+pub async fn room(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, ApiError> {
+    let Some(room) = crate::db::get_room_by_id(&state.db, id)
         .await
-        .unwrap();
-    templates::RoomViewTemplate { room }
+        .map_err(ApiError::SQLError)?
+    else {
+        return Err(ApiError::DoesNotExist);
+    };
+
+    Ok(templates::RoomViewTemplate { room })
 }
 
 pub async fn send_message(
+    Extension(tx): Extension<RoomsStream>,
     State(state): State<AppState>,
     Path(room): Path<i32>,
     Form(form): Form<MessageNew>,
@@ -122,5 +136,17 @@ pub async fn send_message(
     {
         log::error!("Error while creating message relation: {e}");
     };
+    if tx.send(room).is_err() {
+        println!("Message sent but nobody listening to the stream");
+    }
     templates::MessageTemplate { message }
+}
+
+pub async fn messages(State(state): State<AppState>, Path(room): Path<i32>) -> impl IntoResponse {
+    let messages = db::get_room_messages(&state.db, room).await.unwrap();
+    templates::MessagesTemplate { messages }
+}
+
+pub async fn sign_in_page(cookies: CookieJar) -> impl IntoResponse {
+    //
 }

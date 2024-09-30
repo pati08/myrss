@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  td {
+    @apply p-2 border-gray-200 border-2
+  }
+  a {
+    @apply text-blue-500 underline
+  }
+}

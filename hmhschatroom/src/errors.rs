@@ -4,6 +4,7 @@ use axum::response::{IntoResponse, Response};
 pub enum ApiError {
     SQLError(sqlx::Error),
     HTTPError(axum::http::Error),
+    DoesNotExist,
 }
 
 impl IntoResponse for ApiError {
@@ -17,6 +18,7 @@ impl IntoResponse for ApiError {
                 format!("HTTP error: {e}"),
             )
                 .into_response(),
+            Self::DoesNotExist => StatusCode::NOT_FOUND.into_response(),
         }
     }
 }

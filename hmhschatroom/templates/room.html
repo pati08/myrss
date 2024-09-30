@@ -1,15 +1,5 @@
 <tr id="shuttle-room-{{ room.id }}">
-    <td>{{ room.id }}</td>
+    <!-- <td>{{ room.name }}</td> -->
+    <td><a href="/rooms/{{ room.id }}">{{ room.name }}</a></td>
     <td id="shuttle-room-desc-{{room.id}}">{{ room.description }}</td>
-    <td>
-      <a href="/rooms/{{ room.id }}">{{ room.name }}</a>
-        <!-- <button -->
-        <!--     hx-delete="/rooms/{{room.id}}" -->
-        <!--     hx-trigger="click" -->
-        <!--     hx-target="#shuttle-room-{{room.id}}" -->
-        <!--     hx-swap="delete" -->
-        <!-- > -->
-        <!--     Delete -->
-        <!-- </button> -->
-    </td>
 </tr>

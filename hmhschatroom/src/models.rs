@@ -13,8 +13,16 @@ use sqlx::types::chrono::{DateTime, Local};
 //     pub id: i32,
 // }
 
-#[derive(sqlx::FromRow, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Room {
+    pub id: i32,
+    pub name: String,
+    pub description: String,
+    pub messages: Vec<Message>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct RoomRaw {
     pub id: i32,
     pub name: String,
     pub description: String,
@@ -26,7 +34,7 @@ pub struct RoomNew {
     pub description: String,
 }
 
-#[derive(sqlx::FromRow, Serialize, Deserialize)]
+#[derive(sqlx::FromRow, Serialize, Deserialize, Clone)]
 pub struct Message {
     pub id: i32,
     pub sent_date: DateTime<Local>,
