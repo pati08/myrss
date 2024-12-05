@@ -1,5 +1,5 @@
 run:
-    tailwindcsss -i ./tailwind.css -o ./assets/tailwind.css --minify
+    tailwindcss -i ./tailwind.css -o ./assets/tailwind.css --minify
     cargo shuttle run
 deploy:
     tailwindcss -i ./tailwind.css -o ./assets/tailwind.css --minify
