@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <script
+            src="https://unpkg.com/htmx.org@1.9.6"
+            integrity="sha384-FhXw7b6AlE/jyjlZH5iHa/tTe9EpJ1Y55RjcgPbjeWMskSxZt1v9qkxLJWNJaGni"
+            crossorigin="anonymous"
+        ></script>
+        <script>
+          htmx.defineExtension('reset-on-success', {
+              onEvent: function(name, event) {
+                  if (name !== 'htmx:beforeSwap') return;
+                  if (event.detail.isError) return;
+
+                  const triggeringElt = event.detail.requestConfig.elt;
+                  if (!triggeringElt.closest('[hx-reset-on-success]') && !triggeringElt.closest('[data-hx-reset-on-success]'))
+                      return;
+
+                  switch (triggeringElt.tagName) {
+                      case 'INPUT':
+                      case 'TEXTAREA':
+                          triggeringElt.value = triggeringElt.defaultValue;
+                          break;
+                      case 'SELECT':
+                          //too much work
+                          break;
+                      case 'FORM':
+                          triggeringElt.reset();
+                          break;
+                  }
+              }
+          });
+        </script>
+        <link rel="stylesheet" href="/styles.css" />
+        <link rel="stylesheet" href="/tailwind.css" />
+        <title>{% block title %}{{ title }} - My Site{% endblock %}</title>
+        {% block head %}{% endblock %}
+    </head>
+    <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+    <body hx-ext="reset-on-success" class="h-screen">
+        <div id="content" class="p-3 space-y-2 h-screen">
+            {% block content %}
+            <p>Placeholder content</p>
+            {% endblock %}
+        </div>
+    </body>
+</html>

@@ -1,0 +1,37 @@
+{% block title %}RSS Feed{% endblock%}
+{% extends "base.html" %}
+{% block head %}
+<script>
+  const eventSource = new EventSource("/stream");
+  eventSource.onmessage = function(event) {
+    // console.log("appending message: ");
+    // console.log(event.data);
+    document.getElementById("messages").insertAdjacentHTML("afterbegin", event.data);
+  };
+  eventSource.onerror = function() {
+    console.error("Error occurred in SSE connection");
+  };
+
+  window.addEventListener("beforeunload", (event) => {
+    if (eventSource) {
+      eventSource.close();
+      console.log("SSE connection closed");
+    }
+  })
+</script>
+{% endblock %}
+{% block content %}
+<div id="messages"></div>
+
+<form
+  method="POST"
+  id="send-message-form"
+  hx-post="/send"
+  hx-swap="none"
+  hx-reset-on-success
+  class="flex flex-row gap-2 items-center w-screen justify-center fixed bottom-0 bg-gray-200 p-3 left-0"
+  >
+  <input placeholder="Your message..." required type="text" name="contents" class="px-3 h-12 rounded-sm bg-gray-50 shadow-xl focus:outline-none focus:ring-gray-700 ring-2 ring-gray-100 basis-2/3 transition" autocomplete="off" spellcheck="false"/>
+  <button type="submit" class="h-12 px-3 bg-gray-50 hover:bg-gray-800 cursor-pointer basis-10 rounded-sm transition ring-2 ring-gray-100 hover:ring-0 shadow-xl hover:text-white font-bold">Send</button>
+</form>
+{% endblock %}
