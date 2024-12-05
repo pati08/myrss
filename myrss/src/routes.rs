@@ -6,6 +6,7 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use futures::Stream;
 use serde::Deserialize;
+use serde_json::json;
 use sqlx::types::chrono::Local;
 use std::convert::Infallible;
 use std::time::Duration;
@@ -96,10 +97,14 @@ pub async fn handle_stream(
     let rx = tx.subscribe();
     let stream = StreamWrapper(name.clone(), tx.clone(), BroadcastStream::new(rx));
 
-    let sse = Sse::new(stream.filter_map(|msg| msg.ok()).map(|msg| {
-        Result::<_, Infallible>::Ok(
-            Event::default().data(MessageTemplate { message: msg }.to_string()),
-        )
+    let sse = Sse::new(stream.filter_map(|msg| msg.ok()).map(move |msg| {
+        let sname = msg.sender.clone();
+        let msghtml = MessageTemplate { message: msg }.to_string();
+        let data = json!({
+            "sender": sname,
+            "message": msghtml,
+        });
+        Result::<_, Infallible>::Ok(Event::default().data(data.to_string()))
     }))
     .keep_alive(
         axum::response::sse::KeepAlive::new()
