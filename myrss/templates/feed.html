@@ -19,15 +19,12 @@
 
     // Check if the browser supports notifications
     if (sender != getCookie("sender-name") && "Notification" in window) {
-      // Request permission to show notifications
-      Notification.requestPermission().then(function(permission) {
-        if (permission === "granted") {
-          // Create the notification
-          var notification = new Notification("New message", {
-            body: sender + " sent a message",
-          });
-        }
-      });
+      if (Notification.permission === "granted") {
+        // Create the notification
+        var notification = new Notification("New message", {
+          body: sender + " sent a message",
+        });
+      }
     }
   };
   eventSource.onerror = function() {
