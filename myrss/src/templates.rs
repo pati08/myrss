@@ -24,3 +24,9 @@ pub struct MessageTemplate {
 #[derive(Template)]
 #[template(path = "feed.html")]
 pub struct FeedTemplate;
+
+#[derive(Template)]
+#[template(path = "banned-name.html")]
+pub struct BannedName {
+    pub name: String,
+}

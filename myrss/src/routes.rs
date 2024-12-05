@@ -1,4 +1,5 @@
 use axum::{
+    http::StatusCode,
     response::{sse::Event, IntoResponse, Redirect, Sse},
     Extension, Form,
 };
@@ -31,8 +32,19 @@ pub struct NamePayload {
 
 pub async fn set_name(jar: CookieJar, Form(payload): Form<NamePayload>) -> impl IntoResponse {
     // let headers = AppendHeaders([(SET_COOKIE, format!("sender-name={}", payload.name))]);
+    let name = payload.name.trim();
+    if name.to_lowercase() == "system" {
+        // If the user tries to pretend to be the System, don't let them
+        return (
+            StatusCode::BAD_REQUEST,
+            templates::BannedName {
+                name: name.to_string(),
+            },
+        )
+            .into_response();
+    }
     let jar = jar.add(Cookie::new("sender-name", payload.name));
-    (jar, Redirect::to("/feed"))
+    (jar, Redirect::to("/feed")).into_response()
 }
 
 struct StreamWrapper(
