@@ -7,6 +7,7 @@ pub struct Message {
     pub sender: String,
     pub sent_date: DateTime<Utc>,
     pub contents: String,
+    pub should_notify: bool,
 }
 #[derive(sqlx::FromRow, Serialize, Deserialize)]
 pub struct MessageNew {

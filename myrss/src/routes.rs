@@ -65,6 +65,7 @@ impl Drop for StreamWrapper {
             construct_message(
                 format!("{} left. Users currently online: {num_receivers}", self.0),
                 "System",
+                false,
             ),
         );
     }
@@ -107,11 +108,13 @@ pub async fn handle_stream(
         } else {
             format!("{}...", &msg.contents[..37])
         };
+        let should_notify = msg.should_notify;
         let msghtml = MessageTemplate { message: msg, tz }.to_string();
         let data = json!({
             "sender": sname,
             "message": msghtml,
-            "preview": preview
+            "preview": preview,
+            "notify": should_notify,
         });
         Result::<_, Infallible>::Ok(Event::default().data(data.to_string()))
     }))
@@ -126,6 +129,7 @@ pub async fn handle_stream(
         construct_message(
             format!("{name} joined. Users currently online: {num_receivers}",),
             "System",
+            true,
         ),
     );
     sse.into_response()
@@ -147,7 +151,7 @@ pub async fn send_message(
         return (jar.remove("timezone"), Redirect::to("/")).into_response();
     };
     let sender = sender.value().to_string();
-    let message = construct_message(form.contents.clone(), sender.clone());
+    let message = construct_message(form.contents.clone(), sender.clone(), true);
     let tmsg = message.clone();
 
     if form.contents.chars().next().is_some_and(|c| c == '!') {
@@ -170,7 +174,7 @@ pub async fn send_message(
             match state.groq_client.chat_completion(request).await {
                 Ok(response) => send_message_backend(
                     tx,
-                    construct_message(response.choices[0].message.content.clone(), "AI"),
+                    construct_message(response.choices[0].message.content.clone(), "AI", true),
                 ),
 
                 Err(e) => log::error!("Failed to get AI response: {e}"),
@@ -186,7 +190,7 @@ pub async fn send_message(
     });
     templates::MessageTemplate { message, tz }.into_response()
 }
-fn construct_message(contents: impl ToString, sender: impl ToString) -> Message {
+fn construct_message(contents: impl ToString, sender: impl ToString, notify: bool) -> Message {
     let contents = contents.to_string();
     let contents = ammonia::clean(&contents);
     let contents = contents
@@ -201,6 +205,7 @@ fn construct_message(contents: impl ToString, sender: impl ToString) -> Message 
         sender,
         contents,
         sent_date: Utc::now(),
+        should_notify: notify,
     }
 }
 fn send_message_backend(tx: Sender<Message>, message: Message) {
