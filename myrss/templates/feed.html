@@ -46,8 +46,7 @@
         if (pickerDialog.open) {
             pickerDialog.close();
             document.getElementById("message-input").focus();
-        } else {
-            pickerDialog.showModal();
+        } else { pickerDialog.showModal();
         }
     }
     document.addEventListener("DOMContentLoaded", () => {
@@ -68,11 +67,40 @@
 
 <dialog id="pickerDialog"><emoji-picker></emoji-picker><!-- <button onclick="togglePickerOpen()">Close</button> --></dialog>
 
+<!-- <form method="POST" id="send-message-form" hx-post="/send" hx-swap="none" hx-reset-on-success class="fixed bottom-0 left-0 flex w-screen flex-row items-center justify-center gap-2 bg-gray-200 p-3"> -->
+<!--     <div class="h-12 basis-2/3 rounded-sm bg-gray-50 shadow-xl ring-2 ring-gray-100 transition focus:outline-none focus:ring-gray-700 flex flex-row"> -->
+<!--         <input placeholder="Your message..." required type="text" name="contents" class="h-12 basis-2/3 rounded-sm bg-gray-50 px-3 ring-2 ring-gray-100 transition focus:outline-none focus:ring-gray-700 w-full flex-grow" autocomplete="off" spellcheck="false" id="message-input"/> -->
+<!--         <img src="emoji.png" class="max-h-full" id="emoji-icon"/> -->
+<!--     </div> -->
+<!--     <button type="submit" class="h-12 basis-10 cursor-pointer rounded-sm bg-gray-50 px-3 font-bold shadow-xl ring-2 ring-gray-100 transition hover:bg-gray-800 hover:text-white hover:ring-0">Send</button> -->
+<!-- </form> -->
 <form method="POST" id="send-message-form" hx-post="/send" hx-swap="none" hx-reset-on-success class="fixed bottom-0 left-0 flex w-screen flex-row items-center justify-center gap-2 bg-gray-200 p-3">
     <div class="h-12 basis-2/3 rounded-sm bg-gray-50 shadow-xl ring-2 ring-gray-100 transition focus:outline-none focus:ring-gray-700 flex flex-row">
-        <input placeholder="Your message..." required type="text" name="contents" class="h-12 basis-2/3 rounded-sm bg-gray-50 px-3 ring-2 ring-gray-100 transition focus:outline-none focus:ring-gray-700 w-full flex-grow" autocomplete="off" spellcheck="false" id="message-input"/>
+        <textarea 
+            placeholder="Your message..." 
+            required 
+            name="contents" 
+            class="h-12 basis-2/3 rounded-sm bg-gray-50 px-3 ring-2 ring-gray-100 transition focus:outline-none focus:ring-gray-700 w-full flex-grow resize-none" 
+            autocomplete="off" 
+            spellcheck="false" 
+            id="message-input"
+        ></textarea>
         <img src="emoji.png" class="max-h-full" id="emoji-icon"/>
     </div>
     <button type="submit" class="h-12 basis-10 cursor-pointer rounded-sm bg-gray-50 px-3 font-bold shadow-xl ring-2 ring-gray-100 transition hover:bg-gray-800 hover:text-white hover:ring-0">Send</button>
 </form>
+
+<script>
+    const textarea = document.getElementById('message-input');
+    const form = document.getElementById('send-message-form');
+
+    textarea.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            // Prevent the default action of creating a new line
+            event.preventDefault();
+            // Submit the form
+            form.requestSubmit();
+        }
+    });
+</script>
 {% endblock %}

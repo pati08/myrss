@@ -19,7 +19,7 @@ fn format_datetime(datetime: &chrono::DateTime<chrono::Utc>, tz: &i32) -> String
 pub struct StartTemplate;
 
 #[derive(Template)]
-#[template(path = "message.html")]
+#[template(path = "message.html", escape = "none")]
 pub struct MessageTemplate {
     pub message: models::Message,
     pub tz: i32,

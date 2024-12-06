@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
 use std::time::Duration;
+use tokio::sync::broadcast::Sender;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tokio_stream::StreamExt as _;
 
@@ -58,21 +59,14 @@ struct StreamWrapper(
 );
 impl Drop for StreamWrapper {
     fn drop(&mut self) {
-        if self
-            .1
-            .send(Message {
-                sender: "System".to_string(),
-                sent_date: Utc::now(),
-                contents: format!(
-                    "{} left. Users currently online: {}",
-                    self.0,
-                    self.1.receiver_count() - 1
-                ),
-            })
-            .is_err()
-        {
-            log::warn!("Nobody heard left message");
-        }
+        let num_receivers = self.1.receiver_count();
+        send_message_backend(
+            self.1.clone(),
+            construct_message(
+                format!("{} left. Users currently online: {num_receivers}", self.0),
+                "System",
+            ),
+        );
     }
 }
 
@@ -126,19 +120,14 @@ pub async fn handle_stream(
             .interval(Duration::from_secs(10))
             .text("keep-alive-text"),
     );
-    if tx
-        .send(Message {
-            sender: "System".to_string(),
-            sent_date: Utc::now(),
-            contents: format!(
-                "{name} joined. Users currently online: {}",
-                tx.receiver_count()
-            ),
-        })
-        .is_err()
-    {
-        log::warn!("Nobody received join notification");
-    };
+    let num_receivers = tx.receiver_count();
+    send_message_backend(
+        tx,
+        construct_message(
+            format!("{name} joined. Users currently online: {num_receivers}",),
+            "System",
+        ),
+    );
     sse.into_response()
 }
 
@@ -158,15 +147,10 @@ pub async fn send_message(
         return (jar.remove("timezone"), Redirect::to("/")).into_response();
     };
     let sender = sender.value().to_string();
-    let message = Message {
-        sender: sender.clone(),
-        sent_date: Utc::now(),
-        contents: form.contents,
-    };
+    let message = construct_message(form.contents.clone(), sender.clone());
     let tmsg = message.clone();
 
-    if tmsg.contents.chars().next().is_some_and(|c| c == '!') {
-        let aimsg = tmsg.contents.clone();
+    if form.contents.chars().next().is_some_and(|c| c == '!') {
         let tx = tx.clone();
         tokio::spawn(async move {
             let messages = vec![
@@ -177,25 +161,18 @@ pub async fn send_message(
                 },
                 ChatCompletionMessage {
                     role: groq_api_rust::ChatCompletionRoles::User,
-                    content: aimsg[1..].to_string(),
+                    content: form.contents[1..].to_string(),
                     name: Some(sender),
                 },
             ];
             let request = ChatCompletionRequest::new("llama-3.1-70b-versatile", messages);
 
             match state.groq_client.chat_completion(request).await {
-                Ok(response) => {
-                    if tx
-                        .send(Message {
-                            sender: "AI".to_string(),
-                            sent_date: Utc::now(),
-                            contents: response.choices[0].message.content.clone(),
-                        })
-                        .is_err()
-                    {
-                        log::warn!("Nobody is listening to the stream");
-                    }
-                }
+                Ok(response) => send_message_backend(
+                    tx,
+                    construct_message(response.choices[0].message.content.clone(), "AI"),
+                ),
+
                 Err(e) => log::error!("Failed to get AI response: {e}"),
             }
         });
@@ -205,11 +182,31 @@ pub async fn send_message(
     // noticed.
     // TODO: Work more on this
     tokio::task::spawn_blocking(move || {
-        if tx.send(tmsg).is_err() {
-            log::warn!("Message sent but nobody listening to the stream");
-        }
+        send_message_backend(tx, tmsg);
     });
     templates::MessageTemplate { message, tz }.into_response()
+}
+fn construct_message(contents: impl ToString, sender: impl ToString) -> Message {
+    let contents = contents.to_string();
+    let contents = ammonia::clean(&contents);
+    let contents = contents
+        .lines()
+        .map(|line| line.trim_end()) // Trim trailing spaces
+        .collect::<Vec<_>>() // Collect into a Vec
+        .join("  \n"); // Join with Markdown's line break syntax (two spaces + newline)
+
+    let contents = markdown::to_html(&contents); // Convert to HTML from Markdown
+    let sender = sender.to_string();
+    Message {
+        sender,
+        contents,
+        sent_date: Utc::now(),
+    }
+}
+fn send_message_backend(tx: Sender<Message>, message: Message) {
+    if tx.send(message).is_err() {
+        log::warn!("Nobody is listening to the stream");
+    }
 }
 
 pub async fn feed(jar: CookieJar) -> impl IntoResponse {
