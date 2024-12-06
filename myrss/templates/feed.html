@@ -5,7 +5,7 @@
     let tz = "timezone=" + new Date().getTimezoneOffset();
     document.cookie = tz;
 
-    const eventSource = new EventSource("/stream");
+    var eventSource = new EventSource("/stream");
     function getCookie(name) {
         const value = `; ${document.cookie}`;
         const parts = value.split(`; ${name}=`);
@@ -31,7 +31,8 @@
         }
     };
     eventSource.onerror = function() {
-        console.error("Error occurred in SSE connection");
+        console.error("Error occurred in SSE connection. Trying to reconnect.");
+        eventSource = new EventSource("/stream");
     };
 
     window.addEventListener("beforeunload", (event) => {

@@ -1,4 +1,5 @@
 use axum::{
+    extract::State,
     http::StatusCode,
     response::{sse::Event, IntoResponse, Redirect, Sse},
     Extension, Form,
@@ -6,6 +7,7 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use chrono::Utc;
 use futures::Stream;
+use groq_api_rust::{ChatCompletionMessage, ChatCompletionRequest};
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
@@ -15,6 +17,7 @@ use tokio_stream::StreamExt as _;
 
 use crate::{
     models::{Message, MessageNew},
+    router::AppState,
     templates::MessageTemplate,
 };
 use crate::{router::RoomsStream, templates};
@@ -139,8 +142,8 @@ pub async fn handle_stream(
     sse.into_response()
 }
 
-#[axum::debug_handler]
 pub async fn send_message(
+    state: State<AppState>,
     Extension(tx): Extension<RoomsStream>,
     jar: CookieJar,
     Form(form): Form<MessageNew>,
@@ -156,13 +159,51 @@ pub async fn send_message(
     };
     let sender = sender.value().to_string();
     let message = Message {
-        sender,
+        sender: sender.clone(),
         sent_date: Utc::now(),
         contents: form.contents,
     };
     let tmsg = message.clone();
+
+    if tmsg.contents.chars().next().is_some_and(|c| c == '!') {
+        let aimsg = tmsg.contents.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let messages = vec![
+                ChatCompletionMessage {
+                    role: groq_api_rust::ChatCompletionRoles::System,
+                    content: include_str!("./aisysmsg.txt").to_string(),
+                    name: None,
+                },
+                ChatCompletionMessage {
+                    role: groq_api_rust::ChatCompletionRoles::User,
+                    content: aimsg[1..].to_string(),
+                    name: Some(sender),
+                },
+            ];
+            let request = ChatCompletionRequest::new("llama-3.1-70b-versatile", messages);
+
+            match state.groq_client.chat_completion(request).await {
+                Ok(response) => {
+                    if tx
+                        .send(Message {
+                            sender: "AI".to_string(),
+                            sent_date: Utc::now(),
+                            contents: response.choices[0].message.content.clone(),
+                        })
+                        .is_err()
+                    {
+                        log::warn!("Nobody is listening to the stream");
+                    }
+                }
+                Err(e) => log::error!("Failed to get AI response: {e}"),
+            }
+        });
+    };
+
     // INFO: This is an attempt to mitigate some long server response times I
-    // noticed
+    // noticed.
+    // TODO: Work more on this
     tokio::task::spawn_blocking(move || {
         if tx.send(tmsg).is_err() {
             log::warn!("Message sent but nobody listening to the stream");
