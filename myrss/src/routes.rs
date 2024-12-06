@@ -105,10 +105,16 @@ pub async fn handle_stream(
 
     let sse = Sse::new(stream.filter_map(|msg| msg.ok()).map(move |msg| {
         let sname = msg.sender.clone();
+        let preview = if msg.contents.len() <= 40 {
+            msg.contents.clone()
+        } else {
+            format!("{}...", &msg.contents[..37])
+        };
         let msghtml = MessageTemplate { message: msg, tz }.to_string();
         let data = json!({
             "sender": sname,
             "message": msghtml,
+            "preview": preview
         });
         Result::<_, Infallible>::Ok(Event::default().data(data.to_string()))
     }))

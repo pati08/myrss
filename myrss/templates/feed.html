@@ -16,6 +16,7 @@
         let parsedData = JSON.parse(event.data);
         let sender = parsedData.sender;
         let message = parsedData.message;
+        let preview = parsedData.preview;
 
         document.getElementById("messages").insertAdjacentHTML("afterbegin", message);
 
@@ -23,8 +24,8 @@
         if (sender != getCookie("sender-name") && "Notification" in window) {
             if (Notification.permission === "granted" && !document.hasFocus()) {
                 // Create the notification
-                var notification = new Notification("New message", {
-                    body: sender + " sent a message",
+                var notification = new Notification("Message from " + sender, {
+                    body: preview,
                 });
             }
         }
