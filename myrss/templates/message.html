@@ -5,7 +5,7 @@
   </div>
   <div class="basis-1/2 text-right text-gray-700 flex flex-row items-center">
     <div class="text-right w-full">
-      {{ self::format_datetime(message.sent_date) }}
+      {{ self::format_datetime(message.sent_date, tz) }}
     </div>
   </div>
 </div>

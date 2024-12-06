@@ -4,10 +4,10 @@ use axum::{
     Extension, Form,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
+use chrono::Utc;
 use futures::Stream;
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::types::chrono::Local;
 use std::convert::Infallible;
 use std::time::Duration;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
@@ -59,7 +59,7 @@ impl Drop for StreamWrapper {
             .1
             .send(Message {
                 sender: "System".to_string(),
-                sent_date: Local::now(),
+                sent_date: Utc::now(),
                 contents: format!(
                     "{} left. Users currently online: {}",
                     self.0,
@@ -92,6 +92,12 @@ pub async fn handle_stream(
     let Some(name) = jar.get("sender-name") else {
         return Redirect::to("/").into_response();
     };
+    let Some(tz) = jar.get("timezone") else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Ok(tz) = tz.value().to_string().parse::<i32>() else {
+        return (jar.remove("timezone"), Redirect::to("/")).into_response();
+    };
     let name = name.value().to_string();
 
     let rx = tx.subscribe();
@@ -99,7 +105,7 @@ pub async fn handle_stream(
 
     let sse = Sse::new(stream.filter_map(|msg| msg.ok()).map(move |msg| {
         let sname = msg.sender.clone();
-        let msghtml = MessageTemplate { message: msg }.to_string();
+        let msghtml = MessageTemplate { message: msg, tz }.to_string();
         let data = json!({
             "sender": sname,
             "message": msghtml,
@@ -114,7 +120,7 @@ pub async fn handle_stream(
     if tx
         .send(Message {
             sender: "System".to_string(),
-            sent_date: Local::now(),
+            sent_date: Utc::now(),
             contents: format!(
                 "{name} joined. Users currently online: {}",
                 tx.receiver_count()
@@ -133,16 +139,30 @@ pub async fn send_message(
     jar: CookieJar,
     Form(form): Form<MessageNew>,
 ) -> impl IntoResponse {
-    let sender = jar.get("sender-name").unwrap().value().to_string();
+    let Some(sender) = jar.get("sender-name") else {
+        return Redirect::to("/").into_response();
+    };
+    let Some(tz) = jar.get("timezone") else {
+        return Redirect::to("/").into_response();
+    };
+    let Ok(tz) = tz.value().to_string().parse::<i32>() else {
+        return (jar.remove("timezone"), Redirect::to("/")).into_response();
+    };
+    let sender = sender.value().to_string();
     let message = Message {
         sender,
-        sent_date: Local::now(),
+        sent_date: Utc::now(),
         contents: form.contents,
     };
-    if tx.send(message.clone()).is_err() {
-        println!("Message sent but nobody listening to the stream");
-    }
-    templates::MessageTemplate { message }
+    let tmsg = message.clone();
+    // INFO: This is an attempt to mitigate some long server response times I
+    // noticed
+    tokio::task::spawn_blocking(move || {
+        if tx.send(tmsg).is_err() {
+            log::warn!("Message sent but nobody listening to the stream");
+        }
+    });
+    templates::MessageTemplate { message, tz }.into_response()
 }
 
 pub async fn feed(jar: CookieJar) -> impl IntoResponse {
