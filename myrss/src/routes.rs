@@ -157,25 +157,37 @@ pub async fn send_message(
     if form.contents.chars().next().is_some_and(|c| c == '!') {
         let tx = tx.clone();
         tokio::spawn(async move {
-            let messages = vec![
-                ChatCompletionMessage {
-                    role: groq_api_rust::ChatCompletionRoles::System,
-                    content: include_str!("./aisysmsg.txt").to_string(),
-                    name: None,
-                },
-                ChatCompletionMessage {
+            let messages = {
+                let mut messages = state.ai_messages.lock().unwrap();
+                messages.push(ChatCompletionMessage {
                     role: groq_api_rust::ChatCompletionRoles::User,
                     content: form.contents[1..].to_string(),
                     name: Some(sender),
-                },
-            ];
+                });
+                if messages.len() > 10 {
+                    *messages = messages[10..].to_vec();
+                }
+                messages.clone()
+            };
+
             let request = ChatCompletionRequest::new("llama-3.1-70b-versatile", messages);
 
             match state.groq_client.chat_completion(request).await {
-                Ok(response) => send_message_backend(
-                    tx,
-                    construct_message(response.choices[0].message.content.clone(), "AI", true),
-                ),
+                Ok(response) => {
+                    let msg =
+                        construct_message(response.choices[0].message.content.clone(), "AI", true);
+                    if tx.send(msg).is_ok() {
+                        state
+                            .ai_messages
+                            .lock()
+                            .unwrap()
+                            .push(ChatCompletionMessage {
+                                role: groq_api_rust::ChatCompletionRoles::Assistant,
+                                content: response.choices[0].message.content.clone(),
+                                name: None,
+                            });
+                    }
+                }
 
                 Err(e) => log::error!("Failed to get AI response: {e}"),
             }
