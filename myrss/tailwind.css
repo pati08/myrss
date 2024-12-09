@@ -3,6 +3,9 @@
 @tailwind utilities;
 
 @layer base {
+    a {
+        @apply text-blue-600 underline
+    }
 }
 
 @layer components {
