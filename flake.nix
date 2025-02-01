@@ -20,6 +20,7 @@
               cargo-shuttle
               sqlx-cli
               tailwindcss
+              dive
             ];
           };
         }

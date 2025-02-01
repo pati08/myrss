@@ -7,7 +7,6 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use chrono::Utc;
 use futures::Stream;
-use groq_api_rust::{ChatCompletionMessage, ChatCompletionRequest};
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
@@ -155,37 +154,51 @@ pub async fn send_message(
     let tmsg = message.clone();
 
     if form.contents.chars().next().is_some_and(|c| c == '!') {
+        log::debug!("Detected message to ai, handling");
         let tx = tx.clone();
         tokio::spawn(async move {
             let messages = {
                 let mut messages = state.ai_messages.lock().unwrap();
-                messages.push(ChatCompletionMessage {
-                    role: groq_api_rust::ChatCompletionRoles::User,
-                    content: form.contents[1..].to_string(),
-                    name: Some(sender),
-                });
+                messages.push(super::create_user_messsage(form.contents[1..].to_string()));
                 if messages.len() > 10 {
-                    *messages = messages[10..].to_vec();
+                    *messages = messages[(messages.len() - 10)..].to_vec();
                 }
                 messages.clone()
             };
 
-            let request = ChatCompletionRequest::new("llama-3.1-70b-versatile", messages);
+            let mut request_args = async_openai::types::CreateChatCompletionRequestArgs::default();
+            request_args.messages(messages);
+            request_args.model("llama-3.3-70b-versatile");
 
-            match state.groq_client.chat_completion(request).await {
+            let response = state
+                .ai_client
+                .chat()
+                .create(request_args.build().unwrap())
+                .await;
+
+            match response {
                 Ok(response) => {
-                    let msg =
-                        construct_message(response.choices[0].message.content.clone(), "AI", true);
+                    let msg = construct_message(
+                        response.choices[0]
+                            .message
+                            .content
+                            .clone()
+                            .unwrap_or_default(),
+                        "AI",
+                        true,
+                    );
                     if tx.send(msg).is_ok() {
                         state
                             .ai_messages
                             .lock()
                             .unwrap()
-                            .push(ChatCompletionMessage {
-                                role: groq_api_rust::ChatCompletionRoles::Assistant,
-                                content: response.choices[0].message.content.clone(),
-                                name: None,
-                            });
+                            .push(super::create_assistant_messsage(
+                                response.choices[0]
+                                    .message
+                                    .content
+                                    .clone()
+                                    .unwrap_or_default(),
+                            ));
                     }
                 }
 
