@@ -161,22 +161,19 @@ pub async fn send_message(
     let message = construct_message(form.contents.clone(), sender.clone(), true);
     let tmsg = message.clone();
 
-    match form.contents.parse::<MessageCommand>() {
-        Ok(MessageCommand::NumUsersOnlineQuery) => {
-            let tx = tx.clone();
+    match parse_message_command(&form.contents) {
+        Some(Ok(MessageCommand::NumUsersOnlineQuery)) => {
             let num_receivers = tx.receiver_count();
-            tokio::task::spawn_blocking(move || {
-                send_message_backend(
-                    tx,
-                    construct_message(
-                        format!("Users currently online: {num_receivers}"),
-                        "Server",
-                        false,
-                    ),
-                );
-            });
+            send_message_delayed_backend(
+                tx.clone(),
+                construct_message(
+                    format!("Users currently online: {num_receivers}"),
+                    "Server",
+                    false,
+                ),
+            );
         }
-        Ok(MessageCommand::AIQuery(query)) => {
+        Some(Ok(MessageCommand::AIQuery(query))) => {
             let tx = tx.clone();
             tokio::spawn(async move {
                 let messages = {
@@ -227,29 +224,27 @@ pub async fn send_message(
                 }
             });
         }
-        Ok(MessageCommand::Help) => {
-            let tx = tx.clone();
-            tokio::task::spawn_blocking(move || {
-                send_message_backend(tx, construct_message(HELP_MESSAGE, "Server", false));
-            });
+        Some(Ok(MessageCommand::Help)) => {
+            send_message_delayed_backend(
+                tx.clone(),
+                construct_message(HELP_MESSAGE, "Server", false),
+            );
         }
-        Err(()) => {
-            let tx = tx.clone();
-            let message = message.contents.clone();
-            tokio::task::spawn_blocking(move || {
-                send_message_backend(
-                    tx,
-                    construct_message(
-                        format!(
-                            "Invalid command `{}`. Use !help to list valid commands",
-                            message
-                        ),
-                        "Server",
-                        false,
+        Some(Err(_)) => {
+            let message = form.contents.clone();
+            send_message_delayed_backend(
+                tx.clone(),
+                construct_message(
+                    format!(
+                        "Invalid command `{}`. Use !help to list valid commands",
+                        message
                     ),
-                );
-            });
+                    "Server",
+                    false,
+                ),
+            );
         }
+        None => {}
     }
 
     if form.contents.chars().next().is_some_and(|c| c == '!') {};
@@ -257,9 +252,7 @@ pub async fn send_message(
     // INFO: This is an attempt to mitigate some long server response times I
     // noticed.
     // TODO: Work more on this
-    tokio::task::spawn_blocking(move || {
-        send_message_backend(tx, tmsg);
-    });
+    send_message_backend(tx, tmsg);
     templates::MessageTemplate { message, tz }.into_response()
 }
 fn construct_message(contents: impl ToString, sender: impl ToString, notify: bool) -> Message {
@@ -286,6 +279,15 @@ fn send_message_backend(tx: Sender<Message>, message: Message) {
     }
 }
 
+fn send_message_delayed_backend(tx: Sender<Message>, message: Message) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if tx.send(message).is_err() {
+            log::warn!("Nobody is listening to the stream");
+        }
+    });
+}
+
 pub async fn feed(jar: CookieJar) -> impl IntoResponse {
     if jar.get("sender-name").is_none() {
         return Redirect::to("/").into_response();
@@ -299,18 +301,20 @@ enum MessageCommand {
     Help,
 }
 
-impl FromStr for MessageCommand {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let Some('!') = s.chars().next() else {
-            return Err(());
-        };
-        let command_input = &s[1..];
-        match command_input.split_whitespace().next() {
-            Some("ai") => Ok(MessageCommand::AIQuery(command_input[3..].to_string())),
-            Some("online") => Ok(MessageCommand::NumUsersOnlineQuery),
-            Some("help") => Ok(MessageCommand::Help),
-            _ => return Err(()),
-        }
+#[derive(Debug)]
+enum MessageParseError {
+    InvalidCommand,
+}
+
+fn parse_message_command(s: &str) -> Option<Result<MessageCommand, MessageParseError>> {
+    let Some('!') = s.chars().next() else {
+        return None;
+    };
+    let command_input = &s[1..];
+    match command_input.split_whitespace().next() {
+        Some("ai") => Some(Ok(MessageCommand::AIQuery(command_input[3..].to_string()))),
+        Some("online") => Some(Ok(MessageCommand::NumUsersOnlineQuery)),
+        Some("help") => Some(Ok(MessageCommand::Help)),
+        _ => Some(Err(MessageParseError::InvalidCommand)),
     }
 }
