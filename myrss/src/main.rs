@@ -6,10 +6,11 @@ mod templates;
 
 use async_openai::types::ChatCompletionRequestMessage;
 
-fn create_user_messsage(message: String) -> ChatCompletionRequestMessage {
+fn create_user_messsage(message: String, name: String) -> ChatCompletionRequestMessage {
+    let message = format!("\"{name}\" says:\n----------\n{message}");
     ChatCompletionRequestMessage::User(async_openai::types::ChatCompletionRequestUserMessage {
         content: async_openai::types::ChatCompletionRequestUserMessageContent::Text(message),
-        name: None,
+        name: Some(name),
     })
 }
 

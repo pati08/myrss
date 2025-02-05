@@ -178,7 +178,7 @@ pub async fn send_message(
             tokio::spawn(async move {
                 let messages = {
                     let mut messages = state.ai_messages.lock().unwrap();
-                    messages.push(super::create_user_messsage(query));
+                    messages.push(super::create_user_messsage(query, sender));
                     if messages.len() > 10 {
                         *messages = messages[(messages.len() - 10)..].to_vec();
                     }
