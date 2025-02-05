@@ -9,8 +9,8 @@ use chrono::Utc;
 use futures::Stream;
 use serde::Deserialize;
 use serde_json::json;
-use std::convert::Infallible;
 use std::time::Duration;
+use std::{convert::Infallible, str::FromStr};
 use tokio::sync::broadcast::Sender;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tokio_stream::StreamExt as _;
@@ -21,6 +21,11 @@ use crate::{
     templates::MessageTemplate,
 };
 use crate::{router::RoomsStream, templates};
+
+const HELP_MESSAGE: &str = "Valid commands:
+!ai &lt;message&gt; - ask a question to an ai assistant
+!online - ask how many users are online
+!help - show this message";
 
 pub async fn home(jar: CookieJar) -> impl IntoResponse {
     if jar.get("sender-name").is_some() {
@@ -156,59 +161,98 @@ pub async fn send_message(
     let message = construct_message(form.contents.clone(), sender.clone(), true);
     let tmsg = message.clone();
 
-    if form.contents.chars().next().is_some_and(|c| c == '!') {
-        log::debug!("Detected message to ai, handling");
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            let messages = {
-                let mut messages = state.ai_messages.lock().unwrap();
-                messages.push(super::create_user_messsage(form.contents[1..].to_string()));
-                if messages.len() > 10 {
-                    *messages = messages[(messages.len() - 10)..].to_vec();
-                }
-                messages.clone()
-            };
-
-            let mut request_args = async_openai::types::CreateChatCompletionRequestArgs::default();
-            request_args.messages(messages);
-            request_args.model("llama-3.3-70b-versatile");
-
-            let response = state
-                .ai_client
-                .chat()
-                .create(request_args.build().unwrap())
-                .await;
-
-            match response {
-                Ok(response) => {
-                    let msg = construct_message(
-                        response.choices[0]
-                            .message
-                            .content
-                            .clone()
-                            .unwrap_or_default(),
-                        "AI",
-                        true,
-                    );
-                    if tx.send(msg).is_ok() {
-                        state
-                            .ai_messages
-                            .lock()
-                            .unwrap()
-                            .push(super::create_assistant_messsage(
-                                response.choices[0]
-                                    .message
-                                    .content
-                                    .clone()
-                                    .unwrap_or_default(),
-                            ));
+    match form.contents.parse::<MessageCommand>() {
+        Ok(MessageCommand::NumUsersOnlineQuery) => {
+            let tx = tx.clone();
+            let num_receivers = tx.receiver_count();
+            tokio::task::spawn_blocking(move || {
+                send_message_backend(
+                    tx,
+                    construct_message(
+                        format!("Users currently online: {num_receivers}"),
+                        "Server",
+                        false,
+                    ),
+                );
+            });
+        }
+        Ok(MessageCommand::AIQuery(query)) => {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let messages = {
+                    let mut messages = state.ai_messages.lock().unwrap();
+                    messages.push(super::create_user_messsage(query));
+                    if messages.len() > 10 {
+                        *messages = messages[(messages.len() - 10)..].to_vec();
                     }
-                }
+                    messages.clone()
+                };
 
-                Err(e) => log::error!("Failed to get AI response: {e}"),
-            }
-        });
-    };
+                let mut request_args =
+                    async_openai::types::CreateChatCompletionRequestArgs::default();
+                request_args.messages(messages);
+                request_args.model("llama-3.3-70b-versatile");
+
+                let response = state
+                    .ai_client
+                    .chat()
+                    .create(request_args.build().unwrap())
+                    .await;
+
+                match response {
+                    Ok(response) => {
+                        let msg = construct_message(
+                            response.choices[0]
+                                .message
+                                .content
+                                .clone()
+                                .unwrap_or_default(),
+                            "AI",
+                            true,
+                        );
+                        if tx.send(msg).is_ok() {
+                            state.ai_messages.lock().unwrap().push(
+                                super::create_assistant_messsage(
+                                    response.choices[0]
+                                        .message
+                                        .content
+                                        .clone()
+                                        .unwrap_or_default(),
+                                ),
+                            );
+                        }
+                    }
+
+                    Err(e) => log::error!("Failed to get AI response: {e}"),
+                }
+            });
+        }
+        Ok(MessageCommand::Help) => {
+            let tx = tx.clone();
+            tokio::task::spawn_blocking(move || {
+                send_message_backend(tx, construct_message(HELP_MESSAGE, "Server", false));
+            });
+        }
+        Err(()) => {
+            let tx = tx.clone();
+            let message = message.contents.clone();
+            tokio::task::spawn_blocking(move || {
+                send_message_backend(
+                    tx,
+                    construct_message(
+                        format!(
+                            "Invalid command `{}`. Use !help to list valid commands",
+                            message
+                        ),
+                        "Server",
+                        false,
+                    ),
+                );
+            });
+        }
+    }
+
+    if form.contents.chars().next().is_some_and(|c| c == '!') {};
 
     // INFO: This is an attempt to mitigate some long server response times I
     // noticed.
@@ -247,4 +291,26 @@ pub async fn feed(jar: CookieJar) -> impl IntoResponse {
         return Redirect::to("/").into_response();
     }
     templates::FeedTemplate.into_response()
+}
+
+enum MessageCommand {
+    AIQuery(String),
+    NumUsersOnlineQuery,
+    Help,
+}
+
+impl FromStr for MessageCommand {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let Some('!') = s.chars().next() else {
+            return Err(());
+        };
+        let command_input = &s[1..];
+        match command_input.split_whitespace().next() {
+            Some("ai") => Ok(MessageCommand::AIQuery(command_input[3..].to_string())),
+            Some("online") => Ok(MessageCommand::NumUsersOnlineQuery),
+            Some("help") => Ok(MessageCommand::Help),
+            _ => return Err(()),
+        }
+    }
 }
