@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     response::{sse::Event, IntoResponse, Redirect, Sse},
     Extension, Form,
 };
@@ -131,7 +131,10 @@ pub async fn handle_stream(
             true,
         ),
     );
-    sse.into_response()
+    let mut resp = sse.into_response();
+    resp.headers_mut()
+        .append("X-Accel-Buffering", HeaderValue::from_static("no"));
+    resp
 }
 
 pub async fn send_message(
