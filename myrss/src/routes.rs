@@ -110,7 +110,7 @@ pub async fn handle_stream(
         let preview = if msg.contents.len() <= 40 {
             msg.contents.clone()
         } else {
-            format!("{}...", &msg.contents[..37])
+            format!("{}...", msg.contents.chars().take(37).collect::<String>())
         };
         let should_notify = msg.should_notify;
         let msghtml = MessageTemplate { message: msg, tz }.to_string();
