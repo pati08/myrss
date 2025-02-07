@@ -9,13 +9,15 @@ use chrono::Utc;
 use futures::Stream;
 use serde::Deserialize;
 use serde_json::json;
+use std::convert::Infallible;
 use std::time::Duration;
-use std::{convert::Infallible, str::FromStr};
+use thiserror::Error;
 use tokio::sync::broadcast::Sender;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tokio_stream::StreamExt as _;
 
 use crate::{
+    ai::Bot,
     models::{Message, MessageNew},
     router::AppState,
     templates::MessageTemplate,
@@ -23,9 +25,16 @@ use crate::{
 use crate::{router::RoomsStream, templates};
 
 const HELP_MESSAGE: &str = "Valid commands:
-!ai &lt;message&gt; - ask a question to an ai assistant
-!online - ask how many users are online
-!help - show this message";
+- !ai &lt;message&gt; - ask a question to the default bot (greg)
+- !ask &lt;bot&gt; &lt;message&gt; - ask a question to a bot by name
+- !newbot &lt;name&gt; [lang:&lt;language&gt;] &lt;instructions&gt; - create a new
+bot that follows custom instructions
+- !listbots - list bots by name
+- !removebot <bot> - remove a bot (you can only remove a bot you created)
+- !online - ask how many users are online
+- !help - show this message";
+
+const BOT_RESPONSES_NOTIFY: bool = false;
 
 pub async fn home(jar: CookieJar) -> impl IntoResponse {
     if jar.get("sender-name").is_some() {
@@ -173,54 +182,20 @@ pub async fn send_message(
                 ),
             );
         }
-        Some(Ok(MessageCommand::AIQuery(query))) => {
+        Some(Ok(MessageCommand::AIQuery { bot, query })) => {
             let tx = tx.clone();
             tokio::spawn(async move {
-                let messages = {
-                    let mut messages = state.ai_messages.lock().unwrap();
-                    messages.push(super::create_user_messsage(query, sender));
-                    if messages.len() > 10 {
-                        *messages = messages[(messages.len() - 10)..].to_vec();
-                    }
-                    messages.clone()
-                };
-
-                let mut request_args =
-                    async_openai::types::CreateChatCompletionRequestArgs::default();
-                request_args.messages(messages);
-                request_args.model("llama-3.3-70b-versatile");
-
-                let response = state
-                    .ai_client
-                    .chat()
-                    .create(request_args.build().unwrap())
+                let ai_context = state.0.ai_context;
+                let response = ai_context
+                    .get_response(&query, &sender, bot.as_deref())
                     .await;
-
-                match response {
-                    Ok(response) => {
-                        let msg = construct_message(
-                            response.choices[0]
-                                .message
-                                .content
-                                .clone()
-                                .unwrap_or_default(),
-                            "AI",
-                            true,
-                        );
-                        if tx.send(msg).is_ok() {
-                            state.ai_messages.lock().unwrap().push(
-                                super::create_assistant_messsage(
-                                    response.choices[0]
-                                        .message
-                                        .content
-                                        .clone()
-                                        .unwrap_or_default(),
-                                ),
-                            );
-                        }
-                    }
-
-                    Err(e) => log::error!("Failed to get AI response: {e}"),
+                if let Ok(response) = response {
+                    let message = construct_message(
+                        response.response,
+                        format!("{} (Bot)", response.bot_name),
+                        BOT_RESPONSES_NOTIFY,
+                    );
+                    send_message_backend(tx, message);
                 }
             });
         }
@@ -229,6 +204,45 @@ pub async fn send_message(
                 tx.clone(),
                 construct_message(HELP_MESSAGE, "Server", false),
             );
+        }
+        Some(Ok(MessageCommand::AICreate { name, lang, config })) => {
+            send_message_delayed_backend(
+                tx.clone(),
+                construct_message("New bot created.", "System", false),
+            );
+            state
+                .0
+                .ai_context
+                .add_bot(Bot::new(name, sender, Some(config), lang))
+                .await;
+        }
+        Some(Ok(MessageCommand::AIList)) => {
+            let bots_list = state
+                .0
+                .ai_context
+                .bots()
+                .await
+                .into_iter()
+                .map(|i| format!("- {}", i.name()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            send_message_delayed_backend(
+                tx.clone(),
+                construct_message(format!("Bots online:\n{bots_list}"), "System", false),
+            );
+        }
+        Some(Ok(MessageCommand::RemoveBot { bot })) => {
+            if state.0.ai_context.remove_bot_by_name(bot).await.is_some() {
+                send_message_delayed_backend(
+                    tx.clone(),
+                    construct_message("Bot removed.", "System", false),
+                );
+            } else {
+                send_message_delayed_backend(
+                    tx.clone(),
+                    construct_message("There is no bot by that name.", "System", false),
+                );
+            }
         }
         Some(Err(_)) => {
             let message = form.contents.clone();
@@ -296,13 +310,26 @@ pub async fn feed(jar: CookieJar) -> impl IntoResponse {
 }
 
 enum MessageCommand {
-    AIQuery(String),
+    AIQuery {
+        bot: Option<String>,
+        query: String,
+    },
+    AICreate {
+        name: String,
+        lang: Option<String>,
+        config: String,
+    },
+    RemoveBot {
+        bot: String,
+    },
+    AIList,
     NumUsersOnlineQuery,
     Help,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 enum MessageParseError {
+    #[error("Invalid command or command syntax entered")]
     InvalidCommand,
 }
 
@@ -311,10 +338,65 @@ fn parse_message_command(s: &str) -> Option<Result<MessageCommand, MessageParseE
         return None;
     };
     let command_input = &s[1..];
-    match command_input.split_whitespace().next() {
-        Some("ai") => Some(Ok(MessageCommand::AIQuery(command_input[3..].to_string()))),
-        Some("online") => Some(Ok(MessageCommand::NumUsersOnlineQuery)),
-        Some("help") => Some(Ok(MessageCommand::Help)),
-        _ => Some(Err(MessageParseError::InvalidCommand)),
+    let Some(command) = command_input.split_whitespace().next() else {
+        return Some(Err(MessageParseError::InvalidCommand));
+    };
+    if command == "ai" {
+        Some(Ok(MessageCommand::AIQuery {
+            bot: None,
+            query: command_input[3..].to_string(),
+        }))
+    } else if command == "ask" && command_input.split_whitespace().count() > 2 {
+        let bot_name = command_input.split_whitespace().nth(1).unwrap();
+        let query = command_input
+            .chars()
+            .skip(3)
+            .skip_while(|c| c.is_whitespace())
+            .skip(bot_name.len())
+            .skip_while(|c| c.is_whitespace())
+            .collect();
+        Some(Ok(MessageCommand::AIQuery {
+            bot: Some(bot_name.to_string()),
+            query,
+        }))
+    } else if command == "online" {
+        Some(Ok(MessageCommand::NumUsersOnlineQuery))
+    } else if command == "help" {
+        Some(Ok(MessageCommand::Help))
+    } else if command == "newbot" && command_input.split_whitespace().count() > 2 {
+        let name = command_input.split_whitespace().nth(1).unwrap();
+        let lang_word = command_input.split_whitespace().nth(2).unwrap();
+        let lang = if lang_word.starts_with("lang=") {
+            Some(lang_word[5..].to_string())
+        } else {
+            None
+        };
+        let customizations = command_input
+            .chars()
+            .skip(6)
+            .skip_while(|c| c.is_whitespace())
+            .skip(name.len())
+            .skip_while(|c| c.is_whitespace());
+        let customizations_final: String = if let Some(ref lang) = lang {
+            customizations
+                .skip(lang.len() + 5)
+                .skip_while(|c| c.is_whitespace())
+                .collect()
+        } else {
+            customizations.collect()
+        };
+        Some(Ok(MessageCommand::AICreate {
+            name: name.to_string(),
+            lang,
+            config: customizations_final,
+        }))
+    } else if command == "listbots" {
+        Some(Ok(MessageCommand::AIList))
+    } else if command == "removebot" {
+        Some(Ok(MessageCommand::RemoveBot {
+            bot: command_input[10..].to_string(),
+        }))
+    } else {
+        Some(Err(MessageParseError::InvalidCommand))
     }
 }

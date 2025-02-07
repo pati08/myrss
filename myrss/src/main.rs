@@ -1,40 +1,9 @@
+mod ai;
 mod errors;
 mod models;
 mod router;
 mod routes;
 mod templates;
-
-use async_openai::types::ChatCompletionRequestMessage;
-
-fn create_user_messsage(message: String, name: String) -> ChatCompletionRequestMessage {
-    let message = format!("\"{name}\" says:\n----------\n{message}");
-    ChatCompletionRequestMessage::User(async_openai::types::ChatCompletionRequestUserMessage {
-        content: async_openai::types::ChatCompletionRequestUserMessageContent::Text(message),
-        name: Some(name),
-    })
-}
-
-fn create_system_messsage(message: String) -> ChatCompletionRequestMessage {
-    ChatCompletionRequestMessage::System(async_openai::types::ChatCompletionRequestSystemMessage {
-        content: async_openai::types::ChatCompletionRequestSystemMessageContent::Text(message),
-        name: None,
-    })
-}
-
-fn create_assistant_messsage(message: String) -> ChatCompletionRequestMessage {
-    ChatCompletionRequestMessage::Assistant(
-        async_openai::types::ChatCompletionRequestAssistantMessage {
-            content: Some(
-                async_openai::types::ChatCompletionRequestAssistantMessageContent::Text(message),
-            ),
-            audio: None,
-            refusal: None,
-            name: None,
-            tool_calls: None,
-            function_call: None,
-        },
-    )
-}
 
 #[cfg(feature = "shuttle")]
 #[shuttle_runtime::main]

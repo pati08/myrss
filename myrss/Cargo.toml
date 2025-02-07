@@ -25,6 +25,7 @@ sqlx = { version = "0.7.2", features = ["chrono"] }
 tokio = { version = "1.28.2", features = [ "full" ] }
 tokio-stream = { version = "0.1.14", features = ["sync"] }
 tower-http = { version = "0.6.2", features = ["fs"] }
+thiserror = "2.0.11"
 
 [features]
 shuttle = [
