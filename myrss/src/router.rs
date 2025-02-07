@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::{ai::AiContext, models::Message, routes};
 use axum::{
@@ -11,7 +11,7 @@ pub type RoomsStream = Sender<Message>;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub ai_context: Arc<AiContext>,
+    pub ai_context: Arc<Mutex<AiContext>>,
 }
 
 pub async fn init_router(groq_api_key: String) -> Router {
@@ -19,7 +19,7 @@ pub async fn init_router(groq_api_key: String) -> Router {
 
     let serve_assets = ServeDir::new("assets");
     // let groq_client = AsyncGroqClient::new(groq_api_key, None).await;
-    let ai_context = AiContext::new(&groq_api_key).into();
+    let ai_context = Arc::new(Mutex::new(AiContext::new(&groq_api_key).unwrap()));
 
     Router::new()
         .route("/", get(routes::home))

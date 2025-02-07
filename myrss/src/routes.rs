@@ -12,7 +12,7 @@ use serde_json::json;
 use std::convert::Infallible;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::broadcast::Sender;
+use tokio::{runtime::Handle, sync::broadcast::Sender};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tokio_stream::StreamExt as _;
 
@@ -184,11 +184,13 @@ pub async fn send_message(
         }
         Some(Ok(MessageCommand::AIQuery { bot, query })) => {
             let tx = tx.clone();
-            tokio::spawn(async move {
+            tokio::task::spawn_blocking(move || {
                 let ai_context = state.0.ai_context;
-                let response = ai_context
-                    .get_response(&query, &sender, bot.as_deref())
-                    .await;
+                let response = Handle::current().block_on(ai_context.lock().unwrap().get_response(
+                    &query,
+                    &sender,
+                    bot.as_deref(),
+                ));
                 if let Ok(response) = response {
                     let message = construct_message(
                         response.response,
@@ -213,15 +215,17 @@ pub async fn send_message(
             state
                 .0
                 .ai_context
-                .add_bot(Bot::new(name, sender, Some(config), lang))
-                .await;
+                .lock()
+                .unwrap()
+                .add_bot(Bot::new(name, sender, Some(config), lang));
         }
         Some(Ok(MessageCommand::AIList)) => {
             let bots_list = state
                 .0
                 .ai_context
+                .lock()
+                .unwrap()
                 .bots()
-                .await
                 .into_iter()
                 .map(|i| format!("- {}", i.name()))
                 .collect::<Vec<_>>()
@@ -232,7 +236,14 @@ pub async fn send_message(
             );
         }
         Some(Ok(MessageCommand::RemoveBot { bot })) => {
-            if state.0.ai_context.remove_bot_by_name(bot).await.is_some() {
+            if state
+                .0
+                .ai_context
+                .lock()
+                .unwrap()
+                .remove_bot_by_name(bot)
+                .is_some()
+            {
                 send_message_delayed_backend(
                     tx.clone(),
                     construct_message("Bot removed.", "System", false),
@@ -366,11 +377,9 @@ fn parse_message_command(s: &str) -> Option<Result<MessageCommand, MessageParseE
     } else if command == "newbot" && command_input.split_whitespace().count() > 2 {
         let name = command_input.split_whitespace().nth(1).unwrap();
         let lang_word = command_input.split_whitespace().nth(2).unwrap();
-        let lang = if lang_word.starts_with("lang=") {
-            Some(lang_word[5..].to_string())
-        } else {
-            None
-        };
+        let lang = lang_word
+            .strip_prefix("lang=")
+            .map(|stripped| stripped.to_string());
         let customizations = command_input
             .chars()
             .skip(6)
