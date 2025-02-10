@@ -22,6 +22,6 @@ The following optional environment variables are also supported:
 
 Name|Value|Description
 --- | --- | ----------
-`PORT` | `unsigned_int` | port number to listen on 
+`SERVER_PORT` | `unsigned_int` | port number to listen on 
 `AI_MAX_HISTORY_CHARS` | `unsigned_int` | maximum number of characters before cutting off messages in AI context
 `BOT_SAVE_PATH` | `path` | path to save and read bot data from
