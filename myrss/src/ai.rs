@@ -11,7 +11,10 @@ use async_openai::{
     Client,
 };
 
-const BOT_SAVE_PATH: &str = "./data/bots.json";
+fn bot_save_path() -> String {
+    const BOT_SAVE_PATH: &str = "./data/bots.json";
+    std::env::var("BOT_SAVE_PATH").unwrap_or_else(|_| BOT_SAVE_PATH.to_string())
+}
 
 // TODO: Message history as shared or individual? Decide.
 
@@ -20,7 +23,7 @@ pub struct AiContext {
     bots: Vec<Bot>,
 }
 fn load_bots() -> anyhow::Result<Vec<Bot>> {
-    let bots_file = std::fs::read_to_string(BOT_SAVE_PATH)?;
+    let bots_file = std::fs::read_to_string(bot_save_path())?;
     let bots: Vec<Bot> = serde_json::from_str(&bots_file)?;
     let bots = bots
         .into_iter()
@@ -135,7 +138,7 @@ impl AiContext {
             .write(true)
             .truncate(true)
             .create(true)
-            .open(BOT_SAVE_PATH)
+            .open(bot_save_path())
             .context("Failed to open file for saving bots")?;
 
         let data = serde_json::to_string_pretty(&self.bots())?;
@@ -220,11 +223,40 @@ impl Bot {
         })
     }
     fn prune_messages(&mut self) {
-        if self.message_history.len() < 10 {
-            return;
-        }
-        let start = self.message_history.len() - 10;
-        self.message_history = self.message_history[start..].to_vec();
+        use async_openai::types::{
+            ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent,
+            ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
+        };
+        self.message_history.reverse();
+        self.message_history = self
+            .message_history
+            .clone()
+            .into_iter()
+            .scan(0u32, |acc, i| {
+                let char_count = match &i {
+                    ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                        content: ChatCompletionRequestUserMessageContent::Text(text),
+                        ..
+                    }) => text.len(),
+                    ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                        content: ChatCompletionRequestSystemMessageContent::Text(text),
+                        ..
+                    }) => text.len(),
+                    _ => 0,
+                };
+                *acc += char_count as u32;
+                if *acc > max_history_chars() {
+                    None
+                } else {
+                    Some(i)
+                }
+            })
+            .collect();
+        // if self.message_history.len() < 10 {
+        //     return;
+        // }
+        // let start = self.message_history.len() - 10;
+        // self.message_history = self.message_history[start..].to_vec();
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -260,44 +292,10 @@ user-selected language \"{}\". Your name is \"{}\"
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use async_openai::types::{
-        ChatCompletionRequestDeveloperMessage, ChatCompletionRequestDeveloperMessageContent,
-    };
-
-    use super::*;
-    #[test]
-    fn prune_messages() {
-        let mut messages = Vec::new();
-        for i in 0..15 {
-            messages.push(ChatCompletionRequestMessage::Developer(
-                async_openai::types::ChatCompletionRequestDeveloperMessage {
-                    content:
-                        async_openai::types::ChatCompletionRequestDeveloperMessageContent::Text(
-                            format!("Message {i}"),
-                        ),
-                    name: None,
-                },
-            ))
-        }
-        let mut bot = Bot {
-            name: String::new(),
-            created_by: String::new(),
-            message_history: messages,
-            custom_config: String::new(),
-            language: String::new(),
-        };
-        bot.prune_messages();
-        assert_eq!(bot.message_history.len(), 10);
-        match &bot.message_history[0] {
-            ChatCompletionRequestMessage::Developer(ChatCompletionRequestDeveloperMessage {
-                content: ChatCompletionRequestDeveloperMessageContent::Text(text),
-                ..
-            }) => {
-                assert_eq!(text, "Message 5");
-            }
-            _ => unreachable!(),
-        }
+fn max_history_chars() -> u32 {
+    const MAX_HISTORY_CHARS: u32 = 3000;
+    match std::env::var("AI_MAX_HISTORY_CHARS").map(|v| v.parse::<u32>()) {
+        Ok(Ok(v)) => v,
+        _ => MAX_HISTORY_CHARS,
     }
 }

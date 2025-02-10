@@ -1,9 +1,21 @@
-# Axum + htmx
+A simple chat feed with whatver stuff I felt like adding
 
-This is an example of how you can use Shuttle with Axum, Askama and htmx to create a frontend that's easily extendable and requires zero framework knowledge, while being able to easily inject variables from the backend into the frontend.
+# How to setup and run
+## Building
+Build with nix:
+- `nix build` - build for x86_64
+- `nix build .#docker` - build docker image for x86_64
+- `nix build .#myrss-arm` - build for arm
+- `nix build .#docker-arm` - build docker image for arm platform
 
-The app is a TODO list with a main page and an event stream page.
+Build with cargo: `cargo build --release`. If building with cargo, you can include a `Secrets.toml` file at the root to set environment variable secrets for running, specified in the next section. You should always keep this `.gitignore`-d. This is not currently supported when building with nix.
 
-## Usage
+## Running
+There are environment variables with default values used to control behavior. The only required one is `GROQ_API_KEY`, which can also be provided in `Secrets.toml` at build time to encode them as strings in the binary instead.
 
-Run the app and go to <http://localhost:8000> to add and remove TODOs from the list.
+The following optional environment variables are also supported:
+
+Name | Value | Description
+--------------------------
+`AI_MAX_HISTORY_CHARS` | `unsigned int` | Maximum number of characters before cutting off messages in AI context
+`BOT_SAVE_PATH` | `path` | path to save and read bot data from
