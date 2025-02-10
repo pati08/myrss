@@ -6,6 +6,12 @@
     a {
         @apply text-blue-600 underline
     }
+    ul {
+        @apply list-disc
+    }
+    ol {
+        @apply list-decimal
+    }
 }
 
 @layer components {

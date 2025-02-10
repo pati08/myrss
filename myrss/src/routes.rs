@@ -51,8 +51,9 @@ pub struct NamePayload {
 pub async fn set_name(jar: CookieJar, Form(payload): Form<NamePayload>) -> impl IntoResponse {
     // let headers = AppendHeaders([(SET_COOKIE, format!("sender-name={}", payload.name))]);
     let name = payload.name.trim();
-    if name.to_lowercase() == "system" {
+    if name.to_lowercase() == "system" || name.ends_with(" (Bot)") {
         // If the user tries to pretend to be the System, don't let them
+        // Also don't let them impersonate bots
         return (
             StatusCode::BAD_REQUEST,
             templates::BannedName {
@@ -166,11 +167,14 @@ pub async fn send_message(
     let Ok(tz) = tz.value().to_string().parse::<i32>() else {
         return (jar.remove("timezone"), Redirect::to("/")).into_response();
     };
+    let message_command = parse_message_command(&form.contents);
+    let is_command = message_command.is_some();
+
     let sender = sender.value().to_string();
-    let message = construct_message(form.contents.clone(), sender.clone(), true);
+    let message = construct_message(form.contents.clone(), sender.clone(), !is_command);
     let tmsg = message.clone();
 
-    match parse_message_command(&form.contents) {
+    match message_command {
         Some(Ok(MessageCommand::NumUsersOnlineQuery)) => {
             let num_receivers = tx.receiver_count();
             send_message_delayed_backend(
@@ -182,7 +186,7 @@ pub async fn send_message(
                 ),
             );
         }
-        Some(Ok(MessageCommand::AIQuery { bot, query })) => {
+        Some(Ok(MessageCommand::QueryBot { bot, query })) => {
             let tx = tx.clone();
             tokio::task::spawn_blocking(move || {
                 let ai_context = state.0.ai_context;
@@ -207,7 +211,7 @@ pub async fn send_message(
                 construct_message(HELP_MESSAGE, "Server", false),
             );
         }
-        Some(Ok(MessageCommand::AICreate { name, lang, config })) => {
+        Some(Ok(MessageCommand::CreateBot { name, lang, config })) => {
             send_message_delayed_backend(
                 tx.clone(),
                 construct_message("New bot created.", "System", false),
@@ -219,7 +223,7 @@ pub async fn send_message(
                 .unwrap()
                 .add_bot(Bot::new(name, sender, Some(config), lang));
         }
-        Some(Ok(MessageCommand::AIList)) => {
+        Some(Ok(MessageCommand::ListBots)) => {
             let bots_list = state
                 .0
                 .ai_context
@@ -227,7 +231,7 @@ pub async fn send_message(
                 .unwrap()
                 .bots()
                 .into_iter()
-                .map(|i| format!("- {}", i.name()))
+                .map(|i| format!("- {} (created by {})", i.name(), i.creator()))
                 .collect::<Vec<_>>()
                 .join("\n");
             send_message_delayed_backend(
@@ -321,11 +325,11 @@ pub async fn feed(jar: CookieJar) -> impl IntoResponse {
 }
 
 enum MessageCommand {
-    AIQuery {
+    QueryBot {
         bot: Option<String>,
         query: String,
     },
-    AICreate {
+    CreateBot {
         name: String,
         lang: Option<String>,
         config: String,
@@ -333,7 +337,7 @@ enum MessageCommand {
     RemoveBot {
         bot: String,
     },
-    AIList,
+    ListBots,
     NumUsersOnlineQuery,
     Help,
 }
@@ -353,7 +357,7 @@ fn parse_message_command(s: &str) -> Option<Result<MessageCommand, MessageParseE
         return Some(Err(MessageParseError::InvalidCommand));
     };
     if command == "ai" {
-        Some(Ok(MessageCommand::AIQuery {
+        Some(Ok(MessageCommand::QueryBot {
             bot: None,
             query: command_input[3..].to_string(),
         }))
@@ -366,7 +370,7 @@ fn parse_message_command(s: &str) -> Option<Result<MessageCommand, MessageParseE
             .skip(bot_name.len())
             .skip_while(|c| c.is_whitespace())
             .collect();
-        Some(Ok(MessageCommand::AIQuery {
+        Some(Ok(MessageCommand::QueryBot {
             bot: Some(bot_name.to_string()),
             query,
         }))
@@ -394,13 +398,13 @@ fn parse_message_command(s: &str) -> Option<Result<MessageCommand, MessageParseE
         } else {
             customizations.collect()
         };
-        Some(Ok(MessageCommand::AICreate {
+        Some(Ok(MessageCommand::CreateBot {
             name: name.to_string(),
             lang,
             config: customizations_final,
         }))
     } else if command == "listbots" {
-        Some(Ok(MessageCommand::AIList))
+        Some(Ok(MessageCommand::ListBots))
     } else if command == "removebot" {
         Some(Ok(MessageCommand::RemoveBot {
             bot: command_input[10..].to_string(),

@@ -22,6 +22,13 @@ pub struct AiContext {
 fn load_bots() -> anyhow::Result<Vec<Bot>> {
     let bots_file = std::fs::read_to_string(BOT_SAVE_PATH)?;
     let bots: Vec<Bot> = serde_json::from_str(&bots_file)?;
+    let bots = bots
+        .into_iter()
+        .map(|mut bot| {
+            bot.prune_messages();
+            bot
+        })
+        .collect();
     Ok(bots)
 }
 impl AiContext {
@@ -51,6 +58,9 @@ impl AiContext {
         user: &str,
         bot_name: Option<&str>,
     ) -> Result<AiResponse, AiResponseError> {
+        use async_openai::types::{
+            ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
+        };
         let bot = if let Some(req_name) = bot_name {
             self.bots
                 .iter_mut()
@@ -59,7 +69,15 @@ impl AiContext {
         } else {
             self.bots.first_mut().ok_or(AiResponseError::NoBotsFound)
         }?;
-        let request_args = bot.get_request_args(user, query);
+        let request_message =
+            ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(format!(
+                    "\"{user}\" says:\n----------\n{query}"
+                )),
+                name: Some(user.to_string()),
+            });
+        bot.message_history.push(request_message);
+        let request_args = bot.get_request_args();
         let response = self
             .client
             .chat()
@@ -83,6 +101,7 @@ impl AiContext {
             },
         );
         bot.message_history.push(history_response);
+        bot.prune_messages();
         let bot_name = bot.name.clone();
         if let Err(e) = self.save() {
             log::error!("Failed saving updated bots:\n{e}");
@@ -176,19 +195,7 @@ impl Bot {
             message_history: vec![],
         }
     }
-    fn get_request_args(&mut self, user: &str, query: &str) -> CreateChatCompletionRequestArgs {
-        use async_openai::types::{
-            ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
-            CreateChatCompletionRequestArgs,
-        };
-        let request_message =
-            ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
-                content: ChatCompletionRequestUserMessageContent::Text(format!(
-                    "\"{user}\" says:\n----------\n{query}"
-                )),
-                name: Some(user.to_string()),
-            });
-        self.message_history.push(request_message);
+    fn get_request_args(&self) -> CreateChatCompletionRequestArgs {
         let messages = self.request_messages();
 
         let mut request_args = CreateChatCompletionRequestArgs::default();
@@ -212,8 +219,18 @@ impl Bot {
             name: Some(self.name.clone()),
         })
     }
+    fn prune_messages(&mut self) {
+        if self.message_history.len() < 10 {
+            return;
+        }
+        let start = self.message_history.len() - 10;
+        self.message_history = self.message_history[start..].to_vec();
+    }
     pub fn name(&self) -> &str {
         &self.name
+    }
+    pub fn creator(&self) -> &str {
+        &self.created_by
     }
     fn sys_message_str(&self) -> String {
         format!(
@@ -240,5 +257,47 @@ user-selected language \"{}\". Your name is \"{}\"
 {}",
             self.created_by, self.language, self.name, self.custom_config
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_openai::types::{
+        ChatCompletionRequestDeveloperMessage, ChatCompletionRequestDeveloperMessageContent,
+    };
+
+    use super::*;
+    #[test]
+    fn prune_messages() {
+        let mut messages = Vec::new();
+        for i in 0..15 {
+            messages.push(ChatCompletionRequestMessage::Developer(
+                async_openai::types::ChatCompletionRequestDeveloperMessage {
+                    content:
+                        async_openai::types::ChatCompletionRequestDeveloperMessageContent::Text(
+                            format!("Message {i}"),
+                        ),
+                    name: None,
+                },
+            ))
+        }
+        let mut bot = Bot {
+            name: String::new(),
+            created_by: String::new(),
+            message_history: messages,
+            custom_config: String::new(),
+            language: String::new(),
+        };
+        bot.prune_messages();
+        assert_eq!(bot.message_history.len(), 10);
+        match &bot.message_history[0] {
+            ChatCompletionRequestMessage::Developer(ChatCompletionRequestDeveloperMessage {
+                content: ChatCompletionRequestDeveloperMessageContent::Text(text),
+                ..
+            }) => {
+                assert_eq!(text, "Message 5");
+            }
+            _ => unreachable!(),
+        }
     }
 }
