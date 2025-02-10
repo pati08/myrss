@@ -15,7 +15,7 @@ There are environment variables with default values used to control behavior. Th
 
 The following optional environment variables are also supported:
 
-Name | Value | Description
---------------------------
+Name|Value|Description
+--- | --- | ----------
 `AI_MAX_HISTORY_CHARS` | `unsigned int` | Maximum number of characters before cutting off messages in AI context
 `BOT_SAVE_PATH` | `path` | path to save and read bot data from
