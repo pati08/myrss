@@ -16,15 +16,25 @@ async fn main(
     Ok(router.into())
 }
 
+const DEFAULT_PORT: u16 = 3000;
+
 #[cfg(not(feature = "shuttle"))]
 #[tokio::main]
 async fn main() {
+    use std::net::Ipv4Addr;
+
     env_logger::init();
     let groq_api_key = option_env!("GROQ_API_KEY")
         .map(|v| v.to_string())
         .or_else(|| std::env::var("GROQ_API_KEY").ok())
         .expect("No Groq API key available");
+    let port = match std::env::var("SERVER_PORT").map(|v| v.parse::<u16>()) {
+        Ok(Ok(port)) => port,
+        _ => DEFAULT_PORT,
+    };
     let router = router::init_router(groq_api_key).await;
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::new(0, 0, 0, 0), port))
+        .await
+        .unwrap();
     axum::serve(listener, router).await.unwrap();
 }
